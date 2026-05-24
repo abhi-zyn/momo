@@ -33,7 +33,7 @@
   }
 
   /* Tall scroll driver creates the scroll length */
-  .driver { height: 700vh; position: relative; pointer-events: none; }
+  .driver { height: 1600vh; position: relative; pointer-events: none; }
 
   /* Fixed stage that holds the canvas */
   .stage {
@@ -372,12 +372,34 @@
   'use strict';
 
   // ---------- Config ----------
-  const FRAME_COUNT    = 192;
-  const FRAME_PATH     = (i) => `assets/images/1-2frame/frame-${String(i).padStart(3, '0')}.jpg`;
-  const PRELOAD_LIMIT  = 6;     // simultaneous image requests for the background batch
-  const READY_FRAMES   = 16;    // start the experience after this many initial frames load
-  const FRAME_W        = 540;   // intrinsic frame width (after ffmpeg crop+scale)
-  const FRAME_H        = 900;   // intrinsic frame height (after ffmpeg crop+scale)
+  const SECTIONS = [
+    { count: 192, path: (i) => `assets/images/1-2frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 540, h: 900 },
+    { count: 240, path: (i) => `assets/images/2-3frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 720, h: 1280 },
+  ];
+  const TOTAL_FRAMES   = SECTIONS.reduce((s, sec) => s + sec.count, 0);
+  const FRAME_COUNT    = TOTAL_FRAMES;
+  const FRAME_PATH     = (i) => {
+    let offset = 0;
+    for (const sec of SECTIONS) {
+      if (i <= offset + sec.count) return sec.path(i - offset);
+      offset += sec.count;
+    }
+    const last = SECTIONS[SECTIONS.length - 1];
+    return last.path(last.count);
+  };
+  function getFrameDimensions(idx) {
+    let offset = 0;
+    for (const sec of SECTIONS) {
+      if (idx < offset + sec.count) return { w: sec.w, h: sec.h };
+      offset += sec.count;
+    }
+    const last = SECTIONS[SECTIONS.length - 1];
+    return { w: last.w, h: last.h };
+  }
+  const PRELOAD_LIMIT  = 6;
+  const READY_FRAMES   = 16;
+  const FRAME_W        = 540;
+  const FRAME_H        = 900;
 
   // ---------- Refs ----------
   const canvas      = document.getElementById('frame');
@@ -412,7 +434,7 @@
     let progress = 0;
 
     // Loaded audio buffers (real recordings overriding the procedural fallbacks)
-    const buffers = { yawn: null };
+    const buffers = { yawn: null, scene2: null };
 
     async function loadBuffer(url) {
       try {
@@ -425,9 +447,58 @@
       }
     }
 
+    // Scene 2 audio playback (synced to scroll)
+    let scene2Src = null, scene2Gain = null;
+    let scene2Playing = false;
+
+    function updateScene2Audio(p) {
+      if (!buffers.scene2 || muted) return;
+      // Section 2 starts at frame 192/432 ≈ 0.4444 progress
+      const sec2Start = 192 / TOTAL_FRAMES;
+      const sec2End   = 1.0;
+      if (p >= sec2Start && p <= sec2End) {
+        const localP = (p - sec2Start) / (sec2End - sec2Start);
+        const targetTime = localP * buffers.scene2.duration;
+        if (!scene2Playing) {
+          // Start playback
+          if (scene2Src) { try { scene2Src.stop(); } catch(e){} }
+          scene2Src = ctx.createBufferSource();
+          scene2Src.buffer = buffers.scene2;
+          scene2Gain = gain(0.8);
+          scene2Src.connect(scene2Gain).connect(sfxBus);
+          scene2Src.playbackRate.value = 1.0;
+          scene2Src.start(0, targetTime);
+          scene2Playing = true;
+          scene2Src.onended = () => { scene2Playing = false; };
+        }
+      } else if (scene2Playing) {
+        if (scene2Src) { try { scene2Src.stop(); } catch(e){} }
+        scene2Playing = false;
+      }
+    }
+
+    // Pause/resume scene2 audio on scroll stop/start
+    let scene2PauseTimer = null;
+    function onScene2Scroll(p) {
+      const sec2Start = 192 / TOTAL_FRAMES;
+      if (p < sec2Start || muted || !buffers.scene2) return;
+      // Resume if paused
+      if (!scene2Playing) {
+        updateScene2Audio(p);
+      }
+      // Set a timer to pause when scrolling stops
+      clearTimeout(scene2PauseTimer);
+      scene2PauseTimer = setTimeout(() => {
+        if (scene2Src && scene2Playing) {
+          try { scene2Src.stop(); } catch(e){}
+          scene2Playing = false;
+        }
+      }, 150);
+    }
+
     function loadAllBuffers() {
-      // Fire and forget — when each buffer arrives it overrides the synth fallback.
       loadBuffer('assets/audio/yawn.mp3').then(b => { if (b) buffers.yawn = b; });
+      loadBuffer('assets/audio/2-3.mp3').then(b => { if (b) buffers.scene2 = b; });
     }
 
     // --- noise buffer (pink-ish) ---
@@ -775,6 +846,7 @@
 
     return {
       init, unmute, mute, isMuted, setProgress,
+      scene2Scroll: (p) => booted && onScene2Scroll(p),
       yawn:  () => booted && playYawn(),
       leaf:  () => booted && playLeafRustle(),
       step:  () => booted && playFootstep(),
@@ -872,7 +944,8 @@
   // Cover-fit: crop to fill, never letterbox
   function drawImageCover(img) {
     if (!img || !img.complete || img.naturalWidth === 0) return;
-    const ir = FRAME_W / FRAME_H;
+    const dims = getFrameDimensions(currentFrame >= 0 ? currentFrame : 0);
+    const ir = dims.w / dims.h;
     const cr = viewW / viewH;
     let dw, dh, dx, dy;
     if (cr > ir) { dw = viewW; dh = viewW / ir; dx = 0; dy = (viewH - dh) / 2; }
@@ -949,10 +1022,14 @@
 
   // ---------- Story captions ----------
   const story = [
-    { from: 0.04, to: 0.20, text: '🌙 Momo wakes in the hollow' },
-    { from: 0.26, to: 0.44, text: '✨ A yawn, a stretch, a small brave heart' },
-    { from: 0.52, to: 0.70, text: '🍃 The leaf-bed is left behind' },
-    { from: 0.78, to: 0.96, text: '🌅 Toward the strawberry house at sunrise' },
+    { from: 0.02, to: 0.10, text: '🌙 Momo wakes in the hollow' },
+    { from: 0.12, to: 0.22, text: '✨ A yawn, a stretch, a small brave heart' },
+    { from: 0.25, to: 0.35, text: '🍃 The leaf-bed is left behind' },
+    { from: 0.37, to: 0.43, text: '🌅 Toward the strawberry house at sunrise' },
+    { from: 0.46, to: 0.56, text: '🐾 Momo walks the dirt path' },
+    { from: 0.60, to: 0.72, text: '🌿 Through the morning mist' },
+    { from: 0.78, to: 0.88, text: '☀️ The world wakes with Momo' },
+    { from: 0.92, to: 0.98, text: '🏡 Almost home' },
   ];
 
   let activeCaption = '';
@@ -983,7 +1060,7 @@
   let displayedProgress = 0;   // what we're actually painting (0..1)
   let rafId             = null;
   let lastRenderedIdx   = -1;
-  const SMOOTHING       = 0.18;  // higher = snappier, lower = floatier
+  const SMOOTHING       = 0.12;  // higher = snappier, lower = floatier (buttery)
   const SETTLE_EPS      = 0.0002;
 
   function readScrollProgress() {
@@ -1019,6 +1096,7 @@
       lastRenderedIdx = idx;
     }
     Audio.setProgress(p);
+    Audio.scene2Scroll(p);
 
     if (p > 0.015) titleEl.classList.add('hidden');
     else titleEl.classList.remove('hidden');
