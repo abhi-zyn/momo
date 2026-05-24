@@ -33,7 +33,7 @@
   }
 
   /* Tall scroll driver creates the scroll length */
-  .driver { height: 1400vh; position: relative; pointer-events: none; }
+  .driver { height: 2500vh; position: relative; pointer-events: none; }
 
   /* Fixed stage that holds the canvas */
   .stage {
@@ -346,6 +346,7 @@
   const SECTIONS = [
     { count: 192, path: (i) => `assets/images/1-2frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 540, h: 900 },
     { count: 210, path: (i) => `assets/images/2-3frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 720, h: 1200 },
+    { count: 331, path: (i) => `assets/images/3-4frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 1284, h: 636 },
   ];
   const TOTAL_FRAMES   = SECTIONS.reduce((s, sec) => s + sec.count, 0);
   const FRAME_COUNT    = TOTAL_FRAMES;
@@ -395,7 +396,13 @@
   const Audio = (() => {
     let ctx, master;
     let booted = false, muted = true;
-    const buffers = { scene1: null, scene2: null };
+    const buffers = [];
+    const scenes = [
+      { file: 'assets/audio/1-2.mp3', start: 0, end: 192 },
+      { file: 'assets/audio/2-3.mp3', start: 192, end: 402 },
+      { file: 'assets/audio/3-4.mp3', start: 402, end: 733 },
+    ];
+    const players = scenes.map(() => ({ src: null, playing: false, timer: null }));
 
     function gain(v = 0) { const g = ctx.createGain(); g.gain.value = v; return g; }
 
@@ -407,50 +414,39 @@
       } catch(e) { return null; }
     }
 
-    // Scene audio players
-    let s1Src = null, s1Playing = false, s1Pause = null;
-    let s2Src = null, s2Playing = false, s2Pause = null;
-
-    function playScene(num, p) {
-      const sec1End = 192 / TOTAL_FRAMES;
-      const buf = num === 1 ? buffers.scene1 : buffers.scene2;
+    function playScene(i, p) {
+      const buf = buffers[i];
+      const s = scenes[i];
+      const pl = players[i];
       if (!buf || muted) return;
-      const inRange = num === 1 ? (p <= sec1End) : (p >= sec1End);
-      if (!inRange) { stopScene(num); return; }
-      const localP = num === 1 ? p / sec1End : (p - sec1End) / (1 - sec1End);
-      const time = localP * buf.duration;
-      if (num === 1 && !s1Playing) {
-        if (s1Src) try { s1Src.stop(); } catch(e){}
-        s1Src = ctx.createBufferSource();
-        s1Src.buffer = buf;
-        s1Src.connect(master);
-        s1Src.start(0, time);
-        s1Playing = true;
-        s1Src.onended = () => { s1Playing = false; };
-      }
-      if (num === 2 && !s2Playing) {
-        if (s2Src) try { s2Src.stop(); } catch(e){}
-        s2Src = ctx.createBufferSource();
-        s2Src.buffer = buf;
-        s2Src.connect(master);
-        s2Src.start(0, time);
-        s2Playing = true;
-        s2Src.onended = () => { s2Playing = false; };
+      const pStart = s.start / TOTAL_FRAMES;
+      const pEnd = s.end / TOTAL_FRAMES;
+      if (p < pStart || p > pEnd) { stopScene(i); return; }
+      if (!pl.playing) {
+        const localP = (p - pStart) / (pEnd - pStart);
+        const time = localP * buf.duration;
+        if (pl.src) try { pl.src.stop(); } catch(e){}
+        pl.src = ctx.createBufferSource();
+        pl.src.buffer = buf;
+        pl.src.connect(master);
+        pl.src.start(0, time);
+        pl.playing = true;
+        pl.src.onended = () => { pl.playing = false; };
       }
     }
 
-    function stopScene(num) {
-      if (num === 1 && s1Playing) { try { s1Src.stop(); } catch(e){} s1Playing = false; }
-      if (num === 2 && s2Playing) { try { s2Src.stop(); } catch(e){} s2Playing = false; }
+    function stopScene(i) {
+      const pl = players[i];
+      if (pl.playing) { try { pl.src.stop(); } catch(e){} pl.playing = false; }
     }
 
     function onScroll(p) {
       if (!booted || muted) return;
-      playScene(1, p);
-      playScene(2, p);
-      clearTimeout(s1Pause); clearTimeout(s2Pause);
-      s1Pause = setTimeout(() => stopScene(1), 150);
-      s2Pause = setTimeout(() => stopScene(2), 150);
+      for (let i = 0; i < scenes.length; i++) {
+        playScene(i, p);
+        clearTimeout(players[i].timer);
+        players[i].timer = setTimeout(() => stopScene(i), 150);
+      }
     }
 
     function init() {
@@ -460,8 +456,7 @@
       ctx = new Ctx();
       master = gain(0);
       master.connect(ctx.destination);
-      loadBuffer('assets/audio/1-2.mp3').then(b => { buffers.scene1 = b; });
-      loadBuffer('assets/audio/2-3.mp3').then(b => { buffers.scene2 = b; });
+      scenes.forEach((s, i) => { loadBuffer(s.file).then(b => { buffers[i] = b; }); });
       booted = true;
     }
 
@@ -475,7 +470,7 @@
     function mute() {
       if (!ctx) return;
       master.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.2);
-      stopScene(1); stopScene(2);
+      for (let i = 0; i < scenes.length; i++) stopScene(i);
       muted = true;
     }
     function isMuted() { return muted; }
