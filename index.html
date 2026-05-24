@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#1a0e08">
+<meta name="description" content="Momo — a scroll-powered morning at the hollow.">
+<title>Momo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  :root {
+    --warm-1: #ffd28a;
+    --warm-2: #ff8c3a;
+    --warm-3: #c4471a;
+    --ink:    #1a0e08;
+    --paper:  #fff6e6;
+  }
+
+  /* IMPORTANT: do NOT set height:100% on html/body or the body becomes a
+     finite scroll container (esp. with overflow-x: hidden), which makes
+     window.scrollY stay at 0 and breaks scroll-driven animations. */
+  html { background: var(--ink); }
+  body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    overflow-x: clip;
+    overscroll-behavior-y: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    min-height: 100vh;
+  }
+
+  /* Tall scroll driver creates the scroll length */
+  .driver { height: 700vh; position: relative; pointer-events: none; }
+
+  /* Fixed stage that holds the canvas */
+  .stage {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 60%, #2a160c 0%, #120804 70%, #060302 100%);
+    z-index: 0;
+  }
+
+  canvas#frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Vignette + warm grade */
+  .vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%),
+      linear-gradient(180deg, rgba(255,170,80,.06), transparent 30%, transparent 70%, rgba(60,20,5,.25));
+    mix-blend-mode: multiply;
+  }
+
+  /* Soft floating dust motes */
+  .motes { position: absolute; inset: 0; pointer-events: none; }
+  .mote {
+    position: absolute;
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: rgba(255, 220, 160, .8);
+    box-shadow: 0 0 6px rgba(255, 200, 120, .6);
+    animation: drift var(--d, 9s) linear infinite;
+    animation-delay: var(--delay, 0s);
+    opacity: 0;
+  }
+  @keyframes drift {
+    0%   { transform: translate(0, 0) scale(.6); opacity: 0; }
+    10%  { opacity: .9; }
+    90%  { opacity: .9; }
+    100% { transform: translate(var(--dx, 20px), -120vh) scale(1); opacity: 0; }
+  }
+
+  /* ---------- Top progress bar ---------- */
+  .progress {
+    position: fixed;
+    left: 0; top: 0;
+    width: 100%;
+    height: 3px;
+    background: rgba(255, 220, 160, .12);
+    z-index: 20;
+  }
+  .progress::after {
+    content: '';
+    display: block;
+    height: 100%;
+    width: calc(var(--p, 0) * 100%);
+    background: linear-gradient(90deg, var(--warm-1), var(--warm-2), var(--warm-3));
+    box-shadow: 0 0 8px rgba(255, 170, 80, .6);
+    transition: width .08s linear;
+  }
+
+  /* ---------- Title ---------- */
+  .title {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 24px max(14vh, env(safe-area-inset-bottom, 0px));
+    text-align: center;
+    pointer-events: none;
+    z-index: 10;
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .title h1 {
+    font-size: clamp(56px, 18vw, 120px);
+    font-weight: 800;
+    letter-spacing: -.04em;
+    line-height: .9;
+    background: linear-gradient(180deg, #fff3d6 0%, #ffb84a 65%, #ff7a1a 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 4px 24px rgba(255, 130, 40, .25);
+    margin-bottom: 10px;
+  }
+  .title p {
+    font-size: 13px;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    color: rgba(255, 235, 200, .8);
+  }
+  .title.hidden { opacity: 0; transform: translateY(-8px); }
+
+  /* ---------- Scroll hint ---------- */
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: max(5vh, env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    font-size: 11px;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    color: rgba(255, 235, 200, .7);
+    z-index: 10;
+    pointer-events: none;
+    transition: opacity .4s ease;
+    text-align: center;
+  }
+  .hint .arrow {
+    display: block;
+    margin: 8px auto 0;
+    width: 12px; height: 12px;
+    border-right: 2px solid rgba(255, 235, 200, .8);
+    border-bottom: 2px solid rgba(255, 235, 200, .8);
+    transform: rotate(45deg);
+    animation: bounce 1.6s ease-in-out infinite;
+  }
+  @keyframes bounce {
+    0%, 100% { transform: rotate(45deg) translate(0, 0); opacity: .35; }
+    50%      { transform: rotate(45deg) translate(3px, 3px); opacity: 1; }
+  }
+
+  /* ---------- Captions ---------- */
+  .caption {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: max(7vh, env(safe-area-inset-bottom, 0px));
+    padding: 0 24px;
+    text-align: center;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .caption span {
+    display: inline-block;
+    padding: 11px 20px;
+    background: rgba(20, 10, 5, .5);
+    backdrop-filter: blur(10px) saturate(140%);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    border: 1px solid rgba(255, 220, 160, .18);
+    border-radius: 999px;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: .2px;
+    color: #fff3d6;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity .4s ease, transform .4s ease;
+    max-width: 92%;
+  }
+  .caption.show span { opacity: 1; transform: translateY(0); }
+
+  /* ---------- Loader ---------- */
+  .loader {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 50%, #2a160c 0%, #080402 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    transition: opacity .6s ease;
+  }
+  .loader.hidden { opacity: 0; pointer-events: none; }
+  .loader-name {
+    font-size: clamp(48px, 16vw, 96px);
+    font-weight: 800;
+    letter-spacing: -.04em;
+    background: linear-gradient(180deg, #fff3d6 0%, #ffb84a 70%, #ff7a1a 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 22px;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(255,170,80,0)); }
+    50%      { transform: scale(1.02); filter: drop-shadow(0 0 18px rgba(255,170,80,.25)); }
+  }
+  .loader-bar {
+    width: min(64vw, 240px);
+    height: 4px;
+    background: rgba(255, 220, 160, .14);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .loader-bar > div {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--warm-1), var(--warm-2), var(--warm-3));
+    transition: width .15s ease;
+    border-radius: 999px;
+  }
+  .loader-text {
+    margin-top: 14px;
+    font-size: 11px;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    color: rgba(255, 235, 200, .65);
+  }
+
+  /* ---------- End screen ---------- */
+  .end {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .5s ease;
+    z-index: 9;
+  }
+  .end .pill {
+    background: rgba(20, 10, 5, .55);
+    border: 1px solid rgba(255, 220, 160, .25);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    padding: 14px 22px;
+    border-radius: 999px;
+    font-size: 12px;
+    letter-spacing: .24em;
+    text-transform: uppercase;
+    color: #fff3d6;
+  }
+
+  .brand {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    font-size: 12px;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    color: rgba(255, 235, 200, .55);
+    z-index: 10;
+    pointer-events: none;
+  }
+  .brand b { color: #ffb84a; font-weight: 700; }
+
+  /* ---------- Audio toggle button ---------- */
+  .audio-btn {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 30;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 220, 160, .25);
+    background: rgba(20, 10, 5, .55);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: #fff3d6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform .2s ease, background .2s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .audio-btn:active { transform: scale(.93); }
+  .audio-btn svg { width: 22px; height: 22px; }
+  .audio-btn .on  { display: none; }
+  .audio-btn.is-on .off { display: none; }
+  .audio-btn.is-on .on  { display: block; }
+  .audio-btn.pulse { animation: btnPulse 1.6s ease-out 1; }
+  @keyframes btnPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(255, 170, 80, .55); }
+    100% { box-shadow: 0 0 0 16px rgba(255, 170, 80, 0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mote, .loader-name { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div class="loader" id="loader" role="status" aria-live="polite">
+  <div class="loader-name">momo</div>
+  <div class="loader-bar"><div id="loader-fill"></div></div>
+  <div class="loader-text" id="loader-text">waking up… 0%</div>
+</div>
+
+<!-- Brand mark -->
+<div class="brand">project · <b>momo</b></div>
+
+<!-- Audio toggle -->
+<button class="audio-btn pulse" id="audio-btn" aria-label="Toggle sound" type="button">
+  <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
+  </svg>
+  <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+  </svg>
+</button>
+
+<!-- Top progress bar -->
+<div class="progress" id="progress"></div>
+
+<!-- Stage -->
+<div class="stage" aria-hidden="true">
+  <canvas id="frame"></canvas>
+  <div class="vignette"></div>
+  <div class="motes" id="motes"></div>
+</div>
+
+<!-- Title overlay (shown at the very start) -->
+<div class="title" id="title">
+  <h1>Momo</h1>
+  <p>a morning at the hollow</p>
+</div>
+
+<!-- Scroll hint -->
+<div class="hint" id="hint">scroll the story<span class="arrow"></span></div>
+
+<!-- Captions -->
+<div class="caption" id="caption"><span id="caption-text"></span></div>
+
+<!-- End overlay -->
+<div class="end" id="end"><div class="pill">★ scroll up to replay ★</div></div>
+
+<!-- Tall scroll driver -->
+<div class="driver"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- Config ----------
+  const FRAME_COUNT    = 192;
+  const FRAME_PATH     = (i) => `assets/images/1-2frame/frame-${String(i).padStart(3, '0')}.jpg`;
+  const PRELOAD_LIMIT  = 6;     // simultaneous image requests for the background batch
+  const READY_FRAMES   = 16;    // start the experience after this many initial frames load
+  const FRAME_W        = 540;   // intrinsic frame width (after ffmpeg crop+scale)
+  const FRAME_H        = 900;   // intrinsic frame height (after ffmpeg crop+scale)
+
+  // ---------- Refs ----------
+  const canvas      = document.getElementById('frame');
+  const ctx         = canvas.getContext('2d', { alpha: false });
+  const loader      = document.getElementById('loader');
+  const loaderFill  = document.getElementById('loader-fill');
+  const loaderText  = document.getElementById('loader-text');
+  const progressEl  = document.getElementById('progress');
+  const titleEl     = document.getElementById('title');
+  const hintEl      = document.getElementById('hint');
+  const captionEl   = document.getElementById('caption');
+  const captionText = document.getElementById('caption-text');
+  const endEl       = document.getElementById('end');
+  const motesEl     = document.getElementById('motes');
+
+  // ---------- Helpers ----------
+  const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+  const lerp  = (p, a, b) => clamp((p - a) / (b - a));
+
+  // ============================================================
+  // Procedural Web Audio sound design — zero external assets.
+  // Layers: ambient bed (wind + crickets + birds) · music box ·
+  // one-shot SFX (yawn, leaf rustle, footstep, chime, bell).
+  // Everything modulated by scroll progress.
+  // ============================================================
+  const Audio = (() => {
+    let ctx, master, ambBus, musicBus, sfxBus;
+    let cricketGain, windGain, birdGain;
+    let musicTimer = null, cricketTimer = null, birdTimer = null;
+    let booted = false;
+    let muted  = true;
+    let progress = 0;
+
+    // Loaded audio buffers (real recordings overriding the procedural fallbacks)
+    const buffers = { yawn: null };
+
+    async function loadBuffer(url) {
+      try {
+        const r = await fetch(url, { cache: 'force-cache' });
+        if (!r.ok) return null;
+        const b = await r.arrayBuffer();
+        return await ctx.decodeAudioData(b);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function loadAllBuffers() {
+      // Fire and forget — when each buffer arrives it overrides the synth fallback.
+      loadBuffer('assets/audio/yawn.mp3').then(b => { if (b) buffers.yawn = b; });
+    }
+
+    // --- noise buffer (pink-ish) ---
+    function makeNoiseBuffer(seconds = 2, color = 'pink') {
+      const sr = ctx.sampleRate;
+      const len = Math.floor(sr * seconds);
+      const buf = ctx.createBuffer(1, len, sr);
+      const data = buf.getChannelData(0);
+      let b0 = 0, b1 = 0, b2 = 0;
+      for (let i = 0; i < len; i++) {
+        const white = Math.random() * 2 - 1;
+        if (color === 'pink') {
+          b0 = 0.99765 * b0 + white * 0.0990460;
+          b1 = 0.96300 * b1 + white * 0.2965164;
+          b2 = 0.57000 * b2 + white * 1.0526913;
+          data[i] = (b0 + b1 + b2 + white * 0.1848) * 0.15;
+        } else {
+          data[i] = white * 0.4;
+        }
+      }
+      return buf;
+    }
+
+    function gain(value = 0) {
+      const g = ctx.createGain();
+      g.gain.value = value;
+      return g;
+    }
+
+    // ---------- Ambient: wind (filtered pink noise loop) ----------
+    function startWind() {
+      const src = ctx.createBufferSource();
+      src.buffer = makeNoiseBuffer(4, 'pink');
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 700;
+      const g = gain(0.55);
+      src.connect(lp).connect(g).connect(ambBus);
+      // Slow LFO on filter for breathing
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 0.07;
+      const lfoG = gain(220);
+      lfo.connect(lfoG).connect(lp.frequency);
+      lfo.start(); src.start();
+      windGain = g;
+    }
+
+    // ---------- Crickets (random short high chirps) ----------
+    function chirp(freq = 4500, dur = 0.04, vol = 0.18) {
+      const t0 = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.value = freq;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = freq;
+      bp.Q.value = 12;
+      const g = gain(0);
+      osc.connect(bp).connect(g).connect(cricketGain);
+      g.gain.linearRampToValueAtTime(vol, t0 + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.02);
+    }
+    function startCrickets() {
+      cricketGain = gain(0.0);
+      cricketGain.connect(ambBus);
+      const tick = () => {
+        if (!booted) return;
+        // night → fewer crickets as we approach morning
+        const intensity = Math.max(0, 1 - progress * 1.2);
+        if (Math.random() < 0.85 * intensity) {
+          // a burst of 3-5 chirps
+          const n = 3 + (Math.random() * 3 | 0);
+          for (let i = 0; i < n; i++) {
+            setTimeout(() => chirp(4200 + Math.random() * 900, 0.05, 0.10 + Math.random() * 0.10),
+                       i * (90 + Math.random() * 60));
+          }
+        }
+        cricketTimer = setTimeout(tick, 600 + Math.random() * 900);
+      };
+      tick();
+    }
+
+    // ---------- Birds (pitched chirps, more as morning arrives) ----------
+    function birdCall() {
+      const t0 = ctx.currentTime;
+      const base = 1400 + Math.random() * 1800;
+      const n = 2 + (Math.random() * 4 | 0);
+      const out = gain(0);
+      out.connect(birdGain);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 6000;
+      out.connect(lp);
+      for (let i = 0; i < n; i++) {
+        const start = t0 + i * (0.07 + Math.random() * 0.08);
+        const dur = 0.08 + Math.random() * 0.06;
+        const osc = ctx.createOscillator();
+        osc.type = 'triangle';
+        const f = base * (1 + (Math.random() - 0.5) * 0.4);
+        osc.frequency.setValueAtTime(f, start);
+        osc.frequency.exponentialRampToValueAtTime(f * (1.2 + Math.random() * 0.5), start + dur);
+        const g = gain(0);
+        osc.connect(g).connect(out);
+        g.gain.linearRampToValueAtTime(0.18, start + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.start(start);
+        osc.stop(start + dur + 0.02);
+      }
+    }
+    function startBirds() {
+      birdGain = gain(0);
+      birdGain.connect(ambBus);
+      const tick = () => {
+        if (!booted) return;
+        const intensity = Math.max(0, progress - 0.15) * 1.3;
+        if (Math.random() < 0.8 * intensity) birdCall();
+        birdTimer = setTimeout(tick, 350 + Math.random() * 800);
+      };
+      tick();
+    }
+
+    // ---------- Music box / lullaby melody ----------
+    // Simple pentatonic pattern, slow tempo
+    const MUSIC_NOTES = [
+      // semitone offsets from C5 (MIDI 72)
+      // a gentle, hopeful pattern
+       0,  4,  7,  9,  7,  4,
+       2,  7,  4,  9, 12,  7,
+       5,  9,  4,  7,  9, 12,
+       0,  7,  4,  9,  7,  4,
+    ];
+    const MUSIC_BASE_MIDI = 72;
+    function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+    function bellNote(freq, when, dur, vol = 0.18) {
+      const harmonics = [
+        { mul: 1,    g: 1.00, type: 'sine' },
+        { mul: 2,    g: 0.40, type: 'sine' },
+        { mul: 3.01, g: 0.18, type: 'sine' },
+        { mul: 4.97, g: 0.10, type: 'triangle' },
+      ];
+      harmonics.forEach((h) => {
+        const osc = ctx.createOscillator();
+        osc.type = h.type;
+        osc.frequency.value = freq * h.mul;
+        const g = gain(0);
+        osc.connect(g).connect(musicBus);
+        const peak = vol * h.g;
+        g.gain.setValueAtTime(0, when);
+        g.gain.linearRampToValueAtTime(peak, when + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+        osc.start(when);
+        osc.stop(when + dur + 0.05);
+      });
+    }
+    function startMusic() {
+      let step = 0;
+      const tickMs = 460; // tempo
+      const tick = () => {
+        if (!booted) return;
+        const semis = MUSIC_NOTES[step % MUSIC_NOTES.length];
+        // slowly pitch up over the journey for a lifting feel
+        const transpose = Math.round(progress * 5); // 0..5 semis
+        const freq = midiToFreq(MUSIC_BASE_MIDI + semis + transpose);
+        const dur  = 1.6;
+        bellNote(freq, ctx.currentTime + 0.02, dur, 0.14);
+        // a softer harmony every 3rd step
+        if (step % 3 === 0) {
+          const f2 = midiToFreq(MUSIC_BASE_MIDI - 12 + semis + transpose);
+          bellNote(f2, ctx.currentTime + 0.02, dur * 1.4, 0.07);
+        }
+        step++;
+        musicTimer = setTimeout(tick, tickMs);
+      };
+      tick();
+    }
+
+    // ---------- One-shot SFX ----------
+    function playYawn() {
+      // Real-recording path (preferred) — keerotic / freesound 575562
+      if (buffers.yawn) {
+        const t0 = ctx.currentTime;
+        const src = ctx.createBufferSource();
+        src.buffer = buffers.yawn;
+        // Gentle envelope so it eases in/out instead of clicking
+        const g = gain(0);
+        src.connect(g).connect(sfxBus);
+        const dur = buffers.yawn.duration;
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(1.05, t0 + 0.04);
+        g.gain.setValueAtTime(1.05, t0 + dur - 0.20);
+        g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+        src.start(t0);
+        src.stop(t0 + dur + 0.05);
+        return;
+      }
+      // Procedural fallback if the file failed to load
+      const t0 = ctx.currentTime;
+      const dur = 1.5;
+      const src = ctx.createBufferSource();
+      src.buffer = makeNoiseBuffer(2, 'pink');
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.Q.value = 4;
+      bp.frequency.setValueAtTime(420, t0);
+      bp.frequency.linearRampToValueAtTime(1100, t0 + dur * 0.55);
+      bp.frequency.linearRampToValueAtTime(360, t0 + dur);
+      const g = gain(0);
+      src.connect(bp).connect(g).connect(sfxBus);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.55, t0 + 0.30);
+      g.gain.linearRampToValueAtTime(0.70, t0 + dur * 0.55);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      src.start(t0); src.stop(t0 + dur + 0.05);
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(170, t0);
+      osc.frequency.linearRampToValueAtTime(280, t0 + dur * 0.55);
+      osc.frequency.linearRampToValueAtTime(140, t0 + dur);
+      const oscFilt = ctx.createBiquadFilter();
+      oscFilt.type = 'lowpass';
+      oscFilt.frequency.value = 1400;
+      const og = gain(0);
+      osc.connect(oscFilt).connect(og).connect(sfxBus);
+      og.gain.setValueAtTime(0, t0);
+      og.gain.linearRampToValueAtTime(0.32, t0 + dur * 0.55);
+      og.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.start(t0); osc.stop(t0 + dur + 0.05);
+    }
+
+    function playLeafRustle() {
+      const t0 = ctx.currentTime;
+      const dur = 0.45;
+      const src = ctx.createBufferSource();
+      src.buffer = makeNoiseBuffer(1, 'white');
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 1800;
+      const g = gain(0);
+      src.connect(hp).connect(g).connect(sfxBus);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.35, t0 + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      src.start(t0); src.stop(t0 + dur + 0.05);
+    }
+
+    function playFootstep() {
+      const t0 = ctx.currentTime;
+      const dur = 0.18;
+      // soft thud (low-pass noise)
+      const src = ctx.createBufferSource();
+      src.buffer = makeNoiseBuffer(0.5, 'white');
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 380;
+      const g = gain(0);
+      src.connect(lp).connect(g).connect(sfxBus);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.32, t0 + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      src.start(t0); src.stop(t0 + dur + 0.05);
+      // high-frequency leaf-crinkle on top
+      const src2 = ctx.createBufferSource();
+      src2.buffer = makeNoiseBuffer(0.5, 'white');
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 4200;
+      bp.Q.value = 1.4;
+      const g2 = gain(0);
+      src2.connect(bp).connect(g2).connect(sfxBus);
+      g2.gain.setValueAtTime(0, t0);
+      g2.gain.linearRampToValueAtTime(0.22, t0 + 0.01);
+      g2.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.7);
+      src2.start(t0); src2.stop(t0 + dur + 0.05);
+    }
+
+    function playChime() {
+      const t0 = ctx.currentTime;
+      // sparkle: arpeggio of bell tones
+      const notes = [0, 7, 12, 16, 19];
+      notes.forEach((semi, i) => {
+        const f = midiToFreq(76 + semi);
+        bellNote(f, t0 + i * 0.08, 1.6, 0.18);
+      });
+    }
+
+    function playBell() {
+      const t0 = ctx.currentTime;
+      const f = midiToFreq(72); // warm C
+      bellNote(f, t0, 3.0, 0.28);
+      bellNote(midiToFreq(72 - 12), t0 + 0.05, 3.4, 0.16);
+    }
+
+    // ---------- Public API ----------
+    function init() {
+      if (booted) return;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      ctx = new Ctx();
+      master = gain(0); // start silent, ramp on unmute
+      master.connect(ctx.destination);
+
+      ambBus   = gain(0.7); ambBus.connect(master);
+      musicBus = gain(0.0); musicBus.connect(master);
+      sfxBus   = gain(0.9); sfxBus.connect(master);
+
+      startWind();
+      startCrickets();
+      startBirds();
+      startMusic();
+      loadAllBuffers();
+
+      booted = true;
+    }
+
+    async function unmute() {
+      if (!booted) init();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') await ctx.resume();
+      const t = ctx.currentTime;
+      master.gain.cancelScheduledValues(t);
+      master.gain.linearRampToValueAtTime(0.85, t + 0.08);
+      muted = false;
+    }
+    function mute() {
+      if (!ctx) return;
+      const t = ctx.currentTime;
+      master.gain.cancelScheduledValues(t);
+      master.gain.linearRampToValueAtTime(0.0, t + 0.25);
+      muted = true;
+    }
+    function isMuted() { return muted; }
+
+    function setProgress(p) {
+      progress = p;
+      if (!booted) return;
+      // Music swells as the story unfolds
+      const musicLevel = 0.10 + p * 0.45;
+      musicBus.gain.linearRampToValueAtTime(musicLevel, ctx.currentTime + 0.2);
+      // Wind a little stronger toward dawn
+      if (windGain) windGain.gain.linearRampToValueAtTime(0.45 + p * 0.2, ctx.currentTime + 0.3);
+    }
+
+    return {
+      init, unmute, mute, isMuted, setProgress,
+      yawn:  () => booted && playYawn(),
+      leaf:  () => booted && playLeafRustle(),
+      step:  () => booted && playFootstep(),
+      chime: () => booted && playChime(),
+      bell:  () => booted && playBell(),
+    };
+  })();
+
+  // ---------- Frame-based SFX triggers ----------
+  // Each entry fires once when scrolling forward across its frame index.
+  const sfxTriggers = [
+    { frame:  10, fn: 'yawn',  cooldown: 8000 },
+    { frame:  70, fn: 'leaf',  cooldown: 4000 },
+    { frame:  88, fn: 'leaf',  cooldown: 4000 },
+    { frame: 105, fn: 'step',  cooldown:  600 },
+    { frame: 115, fn: 'step',  cooldown:  600 },
+    { frame: 125, fn: 'step',  cooldown:  600 },
+    { frame: 135, fn: 'step',  cooldown:  600 },
+    { frame: 145, fn: 'step',  cooldown:  600 },
+    { frame: 155, fn: 'step',  cooldown:  600 },
+    { frame: 167, fn: 'chime', cooldown: 8000 },
+    { frame: 188, fn: 'bell',  cooldown: 8000 },
+  ].map(t => ({ ...t, lastFiredAt: 0, armed: true }));
+
+  let lastFrame = 0;
+  // Window (in frames) after a trigger during which the SFX is still
+  // contextually relevant if the user only just unmuted.
+  const RELEVANT_WINDOW = 30;
+
+  function maybeFireSfx(frame) {
+    // Critical: while audio is muted, do NOT advance lastFrame. If we did,
+    // a user who scrolls past frame 10 with audio off would silently
+    // "consume" the yawn trigger; when they finally tap unmute, the
+    // forward-crossing condition (lastFrame < trigger.frame) would never
+    // be true again. By leaving lastFrame frozen, the very next forward
+    // motion after unmuting will detect the crossing and fire.
+    if (Audio.isMuted()) return;
+    const now = performance.now();
+    const forward = frame > lastFrame;
+    for (const t of sfxTriggers) {
+      if (forward && lastFrame < t.frame && frame >= t.frame) {
+        if (now - t.lastFiredAt > t.cooldown) {
+          Audio[t.fn]();
+          t.lastFiredAt = now;
+        }
+      }
+    }
+    lastFrame = frame;
+  }
+
+  // Called the moment the user unmutes. Plays any trigger whose moment
+  // is happening *right now* on screen so they don't miss it (e.g. they
+  // tapped the speaker icon while Momo is mid-yawn).
+  function fireSfxOnUnmute() {
+    const idx = currentFrame >= 0 ? currentFrame : 0;
+    const now = performance.now();
+    for (const t of sfxTriggers) {
+      if (idx >= t.frame && idx <= t.frame + RELEVANT_WINDOW) {
+        if (now - t.lastFiredAt > t.cooldown) {
+          Audio[t.fn]();
+          t.lastFiredAt = now;
+        }
+      }
+    }
+    // Align lastFrame so subsequent forward motion doesn't double-fire.
+    lastFrame = idx;
+  }
+
+  // ---------- Build dust motes ----------
+  for (let i = 0; i < 14; i++) {
+    const m = document.createElement('div');
+    m.className = 'mote';
+    m.style.left = (Math.random() * 100) + '%';
+    m.style.top  = (60 + Math.random() * 50) + '%';
+    m.style.setProperty('--d', (8 + Math.random() * 8) + 's');
+    m.style.setProperty('--dx', (Math.random() * 60 - 30) + 'px');
+    m.style.setProperty('--delay', (-Math.random() * 12) + 's');
+    motesEl.appendChild(m);
+  }
+
+  // ---------- Canvas sizing (HiDPI + cover fit) ----------
+  let viewW = 0, viewH = 0, dpr = 1;
+  function resize() {
+    dpr   = Math.min(window.devicePixelRatio || 1, 2.5);
+    viewW = window.innerWidth;
+    viewH = window.innerHeight;
+    canvas.width  = Math.round(viewW * dpr);
+    canvas.height = Math.round(viewH * dpr);
+    canvas.style.width  = viewW + 'px';
+    canvas.style.height = viewH + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawCurrent();
+  }
+
+  // Cover-fit: crop to fill, never letterbox
+  function drawImageCover(img) {
+    if (!img || !img.complete || img.naturalWidth === 0) return;
+    const ir = FRAME_W / FRAME_H;
+    const cr = viewW / viewH;
+    let dw, dh, dx, dy;
+    if (cr > ir) { dw = viewW; dh = viewW / ir; dx = 0; dy = (viewH - dh) / 2; }
+    else         { dh = viewH; dw = viewH * ir; dy = 0; dx = (viewW - dw) / 2; }
+    ctx.fillStyle = '#0a0503';
+    ctx.fillRect(0, 0, viewW, viewH);
+    ctx.drawImage(img, dx, dy, dw, dh);
+  }
+
+  // ---------- Image preloading ----------
+  const images = new Array(FRAME_COUNT);
+  let loadedCount = 0;
+
+  function setLoaderProgress() {
+    const pct = Math.round((loadedCount / FRAME_COUNT) * 100);
+    loaderFill.style.width = pct + '%';
+    loaderText.textContent = `waking up… ${pct}%`;
+  }
+
+  function loadFrame(i) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.decoding = 'async';
+      const done = () => { loadedCount++; setLoaderProgress(); resolve(img); };
+      img.onload  = done;
+      img.onerror = done;
+      img.src = FRAME_PATH(i + 1);
+      images[i] = img;
+    });
+  }
+
+  async function preloadInitial() {
+    // Load first READY_FRAMES in parallel (browser will queue at HTTP limit)
+    await Promise.all(
+      Array.from({ length: Math.min(READY_FRAMES, FRAME_COUNT) }, (_, i) => loadFrame(i))
+    );
+  }
+
+  async function preloadRest() {
+    let next = READY_FRAMES;
+    const workers = Array.from({ length: PRELOAD_LIMIT }, async () => {
+      while (next < FRAME_COUNT) {
+        const i = next++;
+        await loadFrame(i);
+      }
+    });
+    await Promise.all(workers);
+  }
+
+  // ---------- Frame rendering ----------
+  let currentFrame = -1;
+  function drawCurrent() {
+    if (currentFrame < 0) return;
+    const img = images[currentFrame];
+    if (img && img.complete && img.naturalWidth > 0) {
+      drawImageCover(img);
+      return;
+    }
+    // Fallback: nearest already-loaded frame so scrubbing never goes blank
+    for (let r = 1; r < 12; r++) {
+      const a = images[currentFrame - r];
+      const b = images[currentFrame + r];
+      if (a && a.complete && a.naturalWidth > 0) { drawImageCover(a); return; }
+      if (b && b.complete && b.naturalWidth > 0) { drawImageCover(b); return; }
+    }
+  }
+
+  function setFrame(idx) {
+    idx = clamp(idx | 0, 0, FRAME_COUNT - 1);
+    if (idx === currentFrame) return;
+    currentFrame = idx;
+    drawCurrent();
+  }
+
+  // ---------- Story captions ----------
+  const story = [
+    { from: 0.04, to: 0.20, text: '🌙 Momo wakes in the hollow' },
+    { from: 0.26, to: 0.44, text: '✨ A yawn, a stretch, a small brave heart' },
+    { from: 0.52, to: 0.70, text: '🍃 The leaf-bed is left behind' },
+    { from: 0.78, to: 0.96, text: '🌅 Toward the strawberry house at sunrise' },
+  ];
+
+  let activeCaption = '';
+  function updateCaption(p) {
+    let next = '';
+    for (const s of story) {
+      if (p >= s.from && p <= s.to) { next = s.text; break; }
+    }
+    if (next !== activeCaption) {
+      activeCaption = next;
+      if (next) {
+        captionText.textContent = next;
+        captionEl.classList.add('show');
+      } else {
+        captionEl.classList.remove('show');
+      }
+    }
+  }
+
+  // ---------- Smooth scroll-driven update loop ----------
+  // Strategy: track a target progress derived from scrollY, and a displayed
+  // progress that lerps toward the target every animation frame. This
+  // replaces the old "round to nearest frame on every scroll event" approach
+  // and produces buttery scrubbing on touch devices where scroll delivery
+  // can be coarse during momentum phases.
+
+  let targetProgress    = 0;   // where the scroll says we should be (0..1)
+  let displayedProgress = 0;   // what we're actually painting (0..1)
+  let rafId             = null;
+  let lastRenderedIdx   = -1;
+  const SMOOTHING       = 0.18;  // higher = snappier, lower = floatier
+  const SETTLE_EPS      = 0.0002;
+
+  function readScrollProgress() {
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
+    const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+    return clamp(scrollTop / max);
+  }
+
+  function ensureLoop() {
+    if (rafId === null) rafId = requestAnimationFrame(loop);
+  }
+
+  function loop() {
+    const diff = targetProgress - displayedProgress;
+    if (Math.abs(diff) < SETTLE_EPS) {
+      displayedProgress = targetProgress;
+      render(displayedProgress);
+      rafId = null;          // settle: stop the loop until scroll resumes
+      return;
+    }
+    displayedProgress += diff * SMOOTHING;
+    render(displayedProgress);
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function render(p) {
+    progressEl.style.setProperty('--p', p);
+
+    const idx = Math.round(p * (FRAME_COUNT - 1));
+    if (idx !== lastRenderedIdx) {
+      setFrame(idx);
+      maybeFireSfx(idx);
+      lastRenderedIdx = idx;
+    }
+    Audio.setProgress(p);
+
+    if (p > 0.015) titleEl.classList.add('hidden');
+    else titleEl.classList.remove('hidden');
+
+    hintEl.style.opacity = String(clamp(1 - p * 18));
+    updateCaption(p);
+    endEl.style.opacity = String(lerp(p, 0.985, 1.0));
+  }
+
+  function onScroll() {
+    targetProgress = readScrollProgress();
+    ensureLoop();
+  }
+  function onResize() {
+    targetProgress = readScrollProgress();
+    // Snap on resize so layout changes don't trigger a slow re-scrub
+    displayedProgress = targetProgress;
+    render(displayedProgress);
+  }
+
+  // Backwards-compat shim used by startExperience()'s initial paint.
+  function update() { onScroll(); }
+
+  // ---------- Boot ----------
+  let started = false;
+  function startExperience() {
+    if (started) return;
+    started = true;
+
+    loader.classList.add('hidden');
+    setTimeout(() => loader.remove(), 700);
+
+    setFrame(0);
+    // Seed both progresses to current scroll, paint immediately, then
+    // hand off to the smooth rAF loop on subsequent scroll events.
+    targetProgress = displayedProgress = readScrollProgress();
+    render(displayedProgress);
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    document.addEventListener('scroll', onScroll, { passive: true });
+
+    // Dismiss hint on first interaction
+    ['touchstart', 'wheel', 'keydown'].forEach((ev) => {
+      window.addEventListener(ev, () => { hintEl.style.opacity = '0'; }, { once: true, passive: true });
+    });
+
+    // Audio toggle button
+    const audioBtn = document.getElementById('audio-btn');
+    audioBtn.addEventListener('click', async () => {
+      audioBtn.classList.remove('pulse');
+      if (Audio.isMuted()) {
+        await Audio.unmute();
+        audioBtn.classList.add('is-on');
+        audioBtn.setAttribute('aria-label', 'Mute sound');
+        // Play any SFX whose moment is happening on screen right now,
+        // so the user doesn't miss the yawn just because they unmuted late.
+        fireSfxOnUnmute();
+      } else {
+        Audio.mute();
+        audioBtn.classList.remove('is-on');
+        audioBtn.setAttribute('aria-label', 'Unmute sound');
+      }
+    });
+  }
+
+  async function boot() {
+    resize();
+    window.addEventListener('resize', () => { resize(); onResize(); });
+    window.addEventListener('orientationchange', () => setTimeout(() => { resize(); onResize(); }, 100));
+
+    // Safety net: never let the loader hang forever
+    setTimeout(startExperience, 12000);
+
+    await preloadInitial();
+    startExperience();   // unlock scrolling + animation immediately
+    preloadRest();       // continue loading the rest in the background
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
