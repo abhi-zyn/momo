@@ -434,7 +434,7 @@
     let progress = 0;
 
     // Loaded audio buffers (real recordings overriding the procedural fallbacks)
-    const buffers = { yawn: null, scene2: null };
+    const buffers = { yawn: null, scene1: null, scene2: null };
 
     async function loadBuffer(url) {
       try {
@@ -445,6 +445,46 @@
       } catch (e) {
         return null;
       }
+    }
+
+    // Scene 1 audio playback (synced to scroll)
+    let scene1Src = null, scene1Gain = null;
+    let scene1Playing = false;
+
+    function updateScene1Audio(p) {
+      if (!buffers.scene1 || muted) return;
+      const sec1End = 192 / TOTAL_FRAMES;
+      if (p <= sec1End) {
+        const localP = p / sec1End;
+        const targetTime = localP * buffers.scene1.duration;
+        if (!scene1Playing) {
+          if (scene1Src) { try { scene1Src.stop(); } catch(e){} }
+          scene1Src = ctx.createBufferSource();
+          scene1Src.buffer = buffers.scene1;
+          scene1Gain = gain(0.8);
+          scene1Src.connect(scene1Gain).connect(sfxBus);
+          scene1Src.start(0, targetTime);
+          scene1Playing = true;
+          scene1Src.onended = () => { scene1Playing = false; };
+        }
+      } else if (scene1Playing) {
+        if (scene1Src) { try { scene1Src.stop(); } catch(e){} }
+        scene1Playing = false;
+      }
+    }
+
+    let scene1PauseTimer = null;
+    function onScene1Scroll(p) {
+      const sec1End = 192 / TOTAL_FRAMES;
+      if (p > sec1End || muted || !buffers.scene1) return;
+      if (!scene1Playing) updateScene1Audio(p);
+      clearTimeout(scene1PauseTimer);
+      scene1PauseTimer = setTimeout(() => {
+        if (scene1Src && scene1Playing) {
+          try { scene1Src.stop(); } catch(e){}
+          scene1Playing = false;
+        }
+      }, 150);
     }
 
     // Scene 2 audio playback (synced to scroll)
@@ -498,6 +538,7 @@
 
     function loadAllBuffers() {
       loadBuffer('assets/audio/yawn.mp3').then(b => { if (b) buffers.yawn = b; });
+      loadBuffer('assets/audio/1-2.mp3').then(b => { if (b) buffers.scene1 = b; });
       loadBuffer('assets/audio/2-3.mp3').then(b => { if (b) buffers.scene2 = b; });
     }
 
@@ -837,15 +878,17 @@
     function setProgress(p) {
       progress = p;
       if (!booted) return;
-      // Music swells as the story unfolds
-      const musicLevel = 0.10 + p * 0.45;
+      // Mute procedural audio when real scene audio is available
+      const hasRealAudio = buffers.scene1 || buffers.scene2;
+      const musicLevel = hasRealAudio ? 0 : 0.10 + p * 0.45;
       musicBus.gain.linearRampToValueAtTime(musicLevel, ctx.currentTime + 0.2);
-      // Wind a little stronger toward dawn
-      if (windGain) windGain.gain.linearRampToValueAtTime(0.45 + p * 0.2, ctx.currentTime + 0.3);
+      const ambLevel = hasRealAudio ? 0 : 0.45 + p * 0.2;
+      if (windGain) windGain.gain.linearRampToValueAtTime(ambLevel, ctx.currentTime + 0.3);
     }
 
     return {
       init, unmute, mute, isMuted, setProgress,
+      scene1Scroll: (p) => booted && onScene1Scroll(p),
       scene2Scroll: (p) => booted && onScene2Scroll(p),
       yawn:  () => booted && playYawn(),
       leaf:  () => booted && playLeafRustle(),
@@ -1096,6 +1139,7 @@
       lastRenderedIdx = idx;
     }
     Audio.setProgress(p);
+    Audio.scene1Scroll(p);
     Audio.scene2Scroll(p);
 
     if (p > 0.015) titleEl.classList.add('hidden');
