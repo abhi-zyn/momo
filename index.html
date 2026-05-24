@@ -33,7 +33,7 @@
   }
 
   /* Tall scroll driver creates the scroll length */
-  .driver { height: 1600vh; position: relative; pointer-events: none; }
+  .driver { height: 1400vh; position: relative; pointer-events: none; }
 
   /* Fixed stage that holds the canvas */
   .stage {
@@ -374,7 +374,7 @@
   // ---------- Config ----------
   const SECTIONS = [
     { count: 192, path: (i) => `assets/images/1-2frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 540, h: 900 },
-    { count: 240, path: (i) => `assets/images/2-3frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 720, h: 1280 },
+    { count: 210, path: (i) => `assets/images/2-3frame/frame-${String(i).padStart(3,'0')}.jpg`, w: 720, h: 1200 },
   ];
   const TOTAL_FRAMES   = SECTIONS.reduce((s, sec) => s + sec.count, 0);
   const FRAME_COUNT    = TOTAL_FRAMES;
