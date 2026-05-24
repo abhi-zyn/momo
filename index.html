@@ -164,34 +164,7 @@
     50%      { transform: rotate(45deg) translate(3px, 3px); opacity: 1; }
   }
 
-  /* ---------- Captions ---------- */
-  .caption {
-    position: fixed;
-    left: 0; right: 0;
-    bottom: max(7vh, env(safe-area-inset-bottom, 0px));
-    padding: 0 24px;
-    text-align: center;
-    pointer-events: none;
-    z-index: 10;
   }
-  .caption span {
-    display: inline-block;
-    padding: 11px 20px;
-    background: rgba(20, 10, 5, .5);
-    backdrop-filter: blur(10px) saturate(140%);
-    -webkit-backdrop-filter: blur(10px) saturate(140%);
-    border: 1px solid rgba(255, 220, 160, .18);
-    border-radius: 999px;
-    font-size: 15px;
-    font-weight: 500;
-    letter-spacing: .2px;
-    color: #fff3d6;
-    opacity: 0;
-    transform: translateY(8px);
-    transition: opacity .4s ease, transform .4s ease;
-    max-width: 92%;
-  }
-  .caption.show span { opacity: 1; transform: translateY(0); }
 
   /* ---------- Loader ---------- */
   .loader {
@@ -358,8 +331,6 @@
 <!-- Scroll hint -->
 <div class="hint" id="hint">scroll the story<span class="arrow"></span></div>
 
-<!-- Captions -->
-<div class="caption" id="caption"><span id="caption-text"></span></div>
 
 <!-- End overlay -->
 <div class="end" id="end"><div class="pill">★ scroll up to replay ★</div></div>
@@ -410,8 +381,6 @@
   const progressEl  = document.getElementById('progress');
   const titleEl     = document.getElementById('title');
   const hintEl      = document.getElementById('hint');
-  const captionEl   = document.getElementById('caption');
-  const captionText = document.getElementById('caption-text');
   const endEl       = document.getElementById('end');
   const motesEl     = document.getElementById('motes');
 
@@ -1063,34 +1032,6 @@
     drawCurrent();
   }
 
-  // ---------- Story captions ----------
-  const story = [
-    { from: 0.02, to: 0.10, text: '🌙 Momo wakes in the hollow' },
-    { from: 0.12, to: 0.22, text: '✨ A yawn, a stretch, a small brave heart' },
-    { from: 0.25, to: 0.35, text: '🍃 The leaf-bed is left behind' },
-    { from: 0.37, to: 0.43, text: '🌅 Toward the strawberry house at sunrise' },
-    { from: 0.46, to: 0.56, text: '🐾 Momo walks the dirt path' },
-    { from: 0.60, to: 0.72, text: '🌿 Through the morning mist' },
-    { from: 0.78, to: 0.88, text: '☀️ The world wakes with Momo' },
-    { from: 0.92, to: 0.98, text: '🏡 Almost home' },
-  ];
-
-  let activeCaption = '';
-  function updateCaption(p) {
-    let next = '';
-    for (const s of story) {
-      if (p >= s.from && p <= s.to) { next = s.text; break; }
-    }
-    if (next !== activeCaption) {
-      activeCaption = next;
-      if (next) {
-        captionText.textContent = next;
-        captionEl.classList.add('show');
-      } else {
-        captionEl.classList.remove('show');
-      }
-    }
-  }
 
   // ---------- Smooth scroll-driven update loop ----------
   // Strategy: track a target progress derived from scrollY, and a displayed
@@ -1146,7 +1087,6 @@
     else titleEl.classList.remove('hidden');
 
     hintEl.style.opacity = String(clamp(1 - p * 18));
-    updateCaption(p);
     endEl.style.opacity = String(lerp(p, 0.985, 1.0));
   }
 
