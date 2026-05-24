@@ -388,441 +388,80 @@
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
   const lerp  = (p, a, b) => clamp((p - a) / (b - a));
 
+
   // ============================================================
-  // Procedural Web Audio sound design — zero external assets.
-  // Layers: ambient bed (wind + crickets + birds) · music box ·
-  // one-shot SFX (yawn, leaf rustle, footstep, chime, bell).
-  // Everything modulated by scroll progress.
+  // Audio — plays extracted video audio synced to scroll
   // ============================================================
   const Audio = (() => {
-    let ctx, master, ambBus, musicBus, sfxBus;
-    let cricketGain, windGain, birdGain;
-    let musicTimer = null, cricketTimer = null, birdTimer = null;
-    let booted = false;
-    let muted  = true;
-    let progress = 0;
+    let ctx, master;
+    let booted = false, muted = true;
+    const buffers = { scene1: null, scene2: null };
 
-    // Loaded audio buffers (real recordings overriding the procedural fallbacks)
-    const buffers = { yawn: null, scene1: null, scene2: null };
+    function gain(v = 0) { const g = ctx.createGain(); g.gain.value = v; return g; }
 
     async function loadBuffer(url) {
       try {
         const r = await fetch(url, { cache: 'force-cache' });
         if (!r.ok) return null;
-        const b = await r.arrayBuffer();
-        return await ctx.decodeAudioData(b);
-      } catch (e) {
-        return null;
-      }
+        return await ctx.decodeAudioData(await r.arrayBuffer());
+      } catch(e) { return null; }
     }
 
-    // Scene 1 audio playback (synced to scroll)
-    let scene1Src = null, scene1Gain = null;
-    let scene1Playing = false;
+    // Scene audio players
+    let s1Src = null, s1Playing = false, s1Pause = null;
+    let s2Src = null, s2Playing = false, s2Pause = null;
 
-    function updateScene1Audio(p) {
-      if (!buffers.scene1 || muted) return;
+    function playScene(num, p) {
       const sec1End = 192 / TOTAL_FRAMES;
-      if (p <= sec1End) {
-        const localP = p / sec1End;
-        const targetTime = localP * buffers.scene1.duration;
-        if (!scene1Playing) {
-          if (scene1Src) { try { scene1Src.stop(); } catch(e){} }
-          scene1Src = ctx.createBufferSource();
-          scene1Src.buffer = buffers.scene1;
-          scene1Gain = gain(0.8);
-          scene1Src.connect(scene1Gain).connect(sfxBus);
-          scene1Src.start(0, targetTime);
-          scene1Playing = true;
-          scene1Src.onended = () => { scene1Playing = false; };
-        }
-      } else if (scene1Playing) {
-        if (scene1Src) { try { scene1Src.stop(); } catch(e){} }
-        scene1Playing = false;
+      const buf = num === 1 ? buffers.scene1 : buffers.scene2;
+      if (!buf || muted) return;
+      const inRange = num === 1 ? (p <= sec1End) : (p >= sec1End);
+      if (!inRange) { stopScene(num); return; }
+      const localP = num === 1 ? p / sec1End : (p - sec1End) / (1 - sec1End);
+      const time = localP * buf.duration;
+      if (num === 1 && !s1Playing) {
+        if (s1Src) try { s1Src.stop(); } catch(e){}
+        s1Src = ctx.createBufferSource();
+        s1Src.buffer = buf;
+        s1Src.connect(master);
+        s1Src.start(0, time);
+        s1Playing = true;
+        s1Src.onended = () => { s1Playing = false; };
+      }
+      if (num === 2 && !s2Playing) {
+        if (s2Src) try { s2Src.stop(); } catch(e){}
+        s2Src = ctx.createBufferSource();
+        s2Src.buffer = buf;
+        s2Src.connect(master);
+        s2Src.start(0, time);
+        s2Playing = true;
+        s2Src.onended = () => { s2Playing = false; };
       }
     }
 
-    let scene1PauseTimer = null;
-    function onScene1Scroll(p) {
-      const sec1End = 192 / TOTAL_FRAMES;
-      if (p > sec1End || muted || !buffers.scene1) return;
-      if (!scene1Playing) updateScene1Audio(p);
-      clearTimeout(scene1PauseTimer);
-      scene1PauseTimer = setTimeout(() => {
-        if (scene1Src && scene1Playing) {
-          try { scene1Src.stop(); } catch(e){}
-          scene1Playing = false;
-        }
-      }, 150);
+    function stopScene(num) {
+      if (num === 1 && s1Playing) { try { s1Src.stop(); } catch(e){} s1Playing = false; }
+      if (num === 2 && s2Playing) { try { s2Src.stop(); } catch(e){} s2Playing = false; }
     }
 
-    // Scene 2 audio playback (synced to scroll)
-    let scene2Src = null, scene2Gain = null;
-    let scene2Playing = false;
-
-    function updateScene2Audio(p) {
-      if (!buffers.scene2 || muted) return;
-      // Section 2 starts at frame 192/432 ≈ 0.4444 progress
-      const sec2Start = 192 / TOTAL_FRAMES;
-      const sec2End   = 1.0;
-      if (p >= sec2Start && p <= sec2End) {
-        const localP = (p - sec2Start) / (sec2End - sec2Start);
-        const targetTime = localP * buffers.scene2.duration;
-        if (!scene2Playing) {
-          // Start playback
-          if (scene2Src) { try { scene2Src.stop(); } catch(e){} }
-          scene2Src = ctx.createBufferSource();
-          scene2Src.buffer = buffers.scene2;
-          scene2Gain = gain(0.8);
-          scene2Src.connect(scene2Gain).connect(sfxBus);
-          scene2Src.playbackRate.value = 1.0;
-          scene2Src.start(0, targetTime);
-          scene2Playing = true;
-          scene2Src.onended = () => { scene2Playing = false; };
-        }
-      } else if (scene2Playing) {
-        if (scene2Src) { try { scene2Src.stop(); } catch(e){} }
-        scene2Playing = false;
-      }
+    function onScroll(p) {
+      if (!booted || muted) return;
+      playScene(1, p);
+      playScene(2, p);
+      clearTimeout(s1Pause); clearTimeout(s2Pause);
+      s1Pause = setTimeout(() => stopScene(1), 150);
+      s2Pause = setTimeout(() => stopScene(2), 150);
     }
 
-    // Pause/resume scene2 audio on scroll stop/start
-    let scene2PauseTimer = null;
-    function onScene2Scroll(p) {
-      const sec2Start = 192 / TOTAL_FRAMES;
-      if (p < sec2Start || muted || !buffers.scene2) return;
-      // Resume if paused
-      if (!scene2Playing) {
-        updateScene2Audio(p);
-      }
-      // Set a timer to pause when scrolling stops
-      clearTimeout(scene2PauseTimer);
-      scene2PauseTimer = setTimeout(() => {
-        if (scene2Src && scene2Playing) {
-          try { scene2Src.stop(); } catch(e){}
-          scene2Playing = false;
-        }
-      }, 150);
-    }
-
-    function loadAllBuffers() {
-      loadBuffer('assets/audio/yawn.mp3').then(b => { if (b) buffers.yawn = b; });
-      loadBuffer('assets/audio/1-2.mp3').then(b => { if (b) buffers.scene1 = b; });
-      loadBuffer('assets/audio/2-3.mp3').then(b => { if (b) buffers.scene2 = b; });
-    }
-
-    // --- noise buffer (pink-ish) ---
-    function makeNoiseBuffer(seconds = 2, color = 'pink') {
-      const sr = ctx.sampleRate;
-      const len = Math.floor(sr * seconds);
-      const buf = ctx.createBuffer(1, len, sr);
-      const data = buf.getChannelData(0);
-      let b0 = 0, b1 = 0, b2 = 0;
-      for (let i = 0; i < len; i++) {
-        const white = Math.random() * 2 - 1;
-        if (color === 'pink') {
-          b0 = 0.99765 * b0 + white * 0.0990460;
-          b1 = 0.96300 * b1 + white * 0.2965164;
-          b2 = 0.57000 * b2 + white * 1.0526913;
-          data[i] = (b0 + b1 + b2 + white * 0.1848) * 0.15;
-        } else {
-          data[i] = white * 0.4;
-        }
-      }
-      return buf;
-    }
-
-    function gain(value = 0) {
-      const g = ctx.createGain();
-      g.gain.value = value;
-      return g;
-    }
-
-    // ---------- Ambient: wind (filtered pink noise loop) ----------
-    function startWind() {
-      const src = ctx.createBufferSource();
-      src.buffer = makeNoiseBuffer(4, 'pink');
-      src.loop = true;
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 700;
-      const g = gain(0.55);
-      src.connect(lp).connect(g).connect(ambBus);
-      // Slow LFO on filter for breathing
-      const lfo = ctx.createOscillator();
-      lfo.frequency.value = 0.07;
-      const lfoG = gain(220);
-      lfo.connect(lfoG).connect(lp.frequency);
-      lfo.start(); src.start();
-      windGain = g;
-    }
-
-    // ---------- Crickets (random short high chirps) ----------
-    function chirp(freq = 4500, dur = 0.04, vol = 0.18) {
-      const t0 = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      osc.type = 'square';
-      osc.frequency.value = freq;
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = freq;
-      bp.Q.value = 12;
-      const g = gain(0);
-      osc.connect(bp).connect(g).connect(cricketGain);
-      g.gain.linearRampToValueAtTime(vol, t0 + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.start(t0);
-      osc.stop(t0 + dur + 0.02);
-    }
-    function startCrickets() {
-      cricketGain = gain(0.0);
-      cricketGain.connect(ambBus);
-      const tick = () => {
-        if (!booted) return;
-        // night → fewer crickets as we approach morning
-        const intensity = Math.max(0, 1 - progress * 1.2);
-        if (Math.random() < 0.85 * intensity) {
-          // a burst of 3-5 chirps
-          const n = 3 + (Math.random() * 3 | 0);
-          for (let i = 0; i < n; i++) {
-            setTimeout(() => chirp(4200 + Math.random() * 900, 0.05, 0.10 + Math.random() * 0.10),
-                       i * (90 + Math.random() * 60));
-          }
-        }
-        cricketTimer = setTimeout(tick, 600 + Math.random() * 900);
-      };
-      tick();
-    }
-
-    // ---------- Birds (pitched chirps, more as morning arrives) ----------
-    function birdCall() {
-      const t0 = ctx.currentTime;
-      const base = 1400 + Math.random() * 1800;
-      const n = 2 + (Math.random() * 4 | 0);
-      const out = gain(0);
-      out.connect(birdGain);
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 6000;
-      out.connect(lp);
-      for (let i = 0; i < n; i++) {
-        const start = t0 + i * (0.07 + Math.random() * 0.08);
-        const dur = 0.08 + Math.random() * 0.06;
-        const osc = ctx.createOscillator();
-        osc.type = 'triangle';
-        const f = base * (1 + (Math.random() - 0.5) * 0.4);
-        osc.frequency.setValueAtTime(f, start);
-        osc.frequency.exponentialRampToValueAtTime(f * (1.2 + Math.random() * 0.5), start + dur);
-        const g = gain(0);
-        osc.connect(g).connect(out);
-        g.gain.linearRampToValueAtTime(0.18, start + 0.01);
-        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
-        osc.start(start);
-        osc.stop(start + dur + 0.02);
-      }
-    }
-    function startBirds() {
-      birdGain = gain(0);
-      birdGain.connect(ambBus);
-      const tick = () => {
-        if (!booted) return;
-        const intensity = Math.max(0, progress - 0.15) * 1.3;
-        if (Math.random() < 0.8 * intensity) birdCall();
-        birdTimer = setTimeout(tick, 350 + Math.random() * 800);
-      };
-      tick();
-    }
-
-    // ---------- Music box / lullaby melody ----------
-    // Simple pentatonic pattern, slow tempo
-    const MUSIC_NOTES = [
-      // semitone offsets from C5 (MIDI 72)
-      // a gentle, hopeful pattern
-       0,  4,  7,  9,  7,  4,
-       2,  7,  4,  9, 12,  7,
-       5,  9,  4,  7,  9, 12,
-       0,  7,  4,  9,  7,  4,
-    ];
-    const MUSIC_BASE_MIDI = 72;
-    function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
-    function bellNote(freq, when, dur, vol = 0.18) {
-      const harmonics = [
-        { mul: 1,    g: 1.00, type: 'sine' },
-        { mul: 2,    g: 0.40, type: 'sine' },
-        { mul: 3.01, g: 0.18, type: 'sine' },
-        { mul: 4.97, g: 0.10, type: 'triangle' },
-      ];
-      harmonics.forEach((h) => {
-        const osc = ctx.createOscillator();
-        osc.type = h.type;
-        osc.frequency.value = freq * h.mul;
-        const g = gain(0);
-        osc.connect(g).connect(musicBus);
-        const peak = vol * h.g;
-        g.gain.setValueAtTime(0, when);
-        g.gain.linearRampToValueAtTime(peak, when + 0.005);
-        g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-        osc.start(when);
-        osc.stop(when + dur + 0.05);
-      });
-    }
-    function startMusic() {
-      let step = 0;
-      const tickMs = 460; // tempo
-      const tick = () => {
-        if (!booted) return;
-        const semis = MUSIC_NOTES[step % MUSIC_NOTES.length];
-        // slowly pitch up over the journey for a lifting feel
-        const transpose = Math.round(progress * 5); // 0..5 semis
-        const freq = midiToFreq(MUSIC_BASE_MIDI + semis + transpose);
-        const dur  = 1.6;
-        bellNote(freq, ctx.currentTime + 0.02, dur, 0.14);
-        // a softer harmony every 3rd step
-        if (step % 3 === 0) {
-          const f2 = midiToFreq(MUSIC_BASE_MIDI - 12 + semis + transpose);
-          bellNote(f2, ctx.currentTime + 0.02, dur * 1.4, 0.07);
-        }
-        step++;
-        musicTimer = setTimeout(tick, tickMs);
-      };
-      tick();
-    }
-
-    // ---------- One-shot SFX ----------
-    function playYawn() {
-      // Real-recording path (preferred) — keerotic / freesound 575562
-      if (buffers.yawn) {
-        const t0 = ctx.currentTime;
-        const src = ctx.createBufferSource();
-        src.buffer = buffers.yawn;
-        // Gentle envelope so it eases in/out instead of clicking
-        const g = gain(0);
-        src.connect(g).connect(sfxBus);
-        const dur = buffers.yawn.duration;
-        g.gain.setValueAtTime(0, t0);
-        g.gain.linearRampToValueAtTime(1.05, t0 + 0.04);
-        g.gain.setValueAtTime(1.05, t0 + dur - 0.20);
-        g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
-        src.start(t0);
-        src.stop(t0 + dur + 0.05);
-        return;
-      }
-      // Procedural fallback if the file failed to load
-      const t0 = ctx.currentTime;
-      const dur = 1.5;
-      const src = ctx.createBufferSource();
-      src.buffer = makeNoiseBuffer(2, 'pink');
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.Q.value = 4;
-      bp.frequency.setValueAtTime(420, t0);
-      bp.frequency.linearRampToValueAtTime(1100, t0 + dur * 0.55);
-      bp.frequency.linearRampToValueAtTime(360, t0 + dur);
-      const g = gain(0);
-      src.connect(bp).connect(g).connect(sfxBus);
-      g.gain.setValueAtTime(0, t0);
-      g.gain.linearRampToValueAtTime(0.55, t0 + 0.30);
-      g.gain.linearRampToValueAtTime(0.70, t0 + dur * 0.55);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      src.start(t0); src.stop(t0 + dur + 0.05);
-      const osc = ctx.createOscillator();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(170, t0);
-      osc.frequency.linearRampToValueAtTime(280, t0 + dur * 0.55);
-      osc.frequency.linearRampToValueAtTime(140, t0 + dur);
-      const oscFilt = ctx.createBiquadFilter();
-      oscFilt.type = 'lowpass';
-      oscFilt.frequency.value = 1400;
-      const og = gain(0);
-      osc.connect(oscFilt).connect(og).connect(sfxBus);
-      og.gain.setValueAtTime(0, t0);
-      og.gain.linearRampToValueAtTime(0.32, t0 + dur * 0.55);
-      og.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.start(t0); osc.stop(t0 + dur + 0.05);
-    }
-
-    function playLeafRustle() {
-      const t0 = ctx.currentTime;
-      const dur = 0.45;
-      const src = ctx.createBufferSource();
-      src.buffer = makeNoiseBuffer(1, 'white');
-      const hp = ctx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = 1800;
-      const g = gain(0);
-      src.connect(hp).connect(g).connect(sfxBus);
-      g.gain.setValueAtTime(0, t0);
-      g.gain.linearRampToValueAtTime(0.35, t0 + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      src.start(t0); src.stop(t0 + dur + 0.05);
-    }
-
-    function playFootstep() {
-      const t0 = ctx.currentTime;
-      const dur = 0.18;
-      // soft thud (low-pass noise)
-      const src = ctx.createBufferSource();
-      src.buffer = makeNoiseBuffer(0.5, 'white');
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 380;
-      const g = gain(0);
-      src.connect(lp).connect(g).connect(sfxBus);
-      g.gain.setValueAtTime(0, t0);
-      g.gain.linearRampToValueAtTime(0.32, t0 + 0.008);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      src.start(t0); src.stop(t0 + dur + 0.05);
-      // high-frequency leaf-crinkle on top
-      const src2 = ctx.createBufferSource();
-      src2.buffer = makeNoiseBuffer(0.5, 'white');
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = 4200;
-      bp.Q.value = 1.4;
-      const g2 = gain(0);
-      src2.connect(bp).connect(g2).connect(sfxBus);
-      g2.gain.setValueAtTime(0, t0);
-      g2.gain.linearRampToValueAtTime(0.22, t0 + 0.01);
-      g2.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.7);
-      src2.start(t0); src2.stop(t0 + dur + 0.05);
-    }
-
-    function playChime() {
-      const t0 = ctx.currentTime;
-      // sparkle: arpeggio of bell tones
-      const notes = [0, 7, 12, 16, 19];
-      notes.forEach((semi, i) => {
-        const f = midiToFreq(76 + semi);
-        bellNote(f, t0 + i * 0.08, 1.6, 0.18);
-      });
-    }
-
-    function playBell() {
-      const t0 = ctx.currentTime;
-      const f = midiToFreq(72); // warm C
-      bellNote(f, t0, 3.0, 0.28);
-      bellNote(midiToFreq(72 - 12), t0 + 0.05, 3.4, 0.16);
-    }
-
-    // ---------- Public API ----------
     function init() {
       if (booted) return;
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
       ctx = new Ctx();
-      master = gain(0); // start silent, ramp on unmute
+      master = gain(0);
       master.connect(ctx.destination);
-
-      ambBus   = gain(0.7); ambBus.connect(master);
-      musicBus = gain(0.0); musicBus.connect(master);
-      sfxBus   = gain(0.9); sfxBus.connect(master);
-
-      startWind();
-      startCrickets();
-      startBirds();
-      startMusic();
-      loadAllBuffers();
-
+      loadBuffer('assets/audio/1-2.mp3').then(b => { buffers.scene1 = b; });
+      loadBuffer('assets/audio/2-3.mp3').then(b => { buffers.scene2 = b; });
       booted = true;
     }
 
@@ -830,102 +469,19 @@
       if (!booted) init();
       if (!ctx) return;
       if (ctx.state === 'suspended') await ctx.resume();
-      const t = ctx.currentTime;
-      master.gain.cancelScheduledValues(t);
-      master.gain.linearRampToValueAtTime(0.85, t + 0.08);
+      master.gain.linearRampToValueAtTime(1.0, ctx.currentTime + 0.08);
       muted = false;
     }
     function mute() {
       if (!ctx) return;
-      const t = ctx.currentTime;
-      master.gain.cancelScheduledValues(t);
-      master.gain.linearRampToValueAtTime(0.0, t + 0.25);
+      master.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.2);
+      stopScene(1); stopScene(2);
       muted = true;
     }
     function isMuted() { return muted; }
 
-    function setProgress(p) {
-      progress = p;
-      if (!booted) return;
-      // Mute procedural audio when real scene audio is available
-      const hasRealAudio = buffers.scene1 || buffers.scene2;
-      const musicLevel = hasRealAudio ? 0 : 0.10 + p * 0.45;
-      musicBus.gain.linearRampToValueAtTime(musicLevel, ctx.currentTime + 0.2);
-      const ambLevel = hasRealAudio ? 0 : 0.45 + p * 0.2;
-      if (windGain) windGain.gain.linearRampToValueAtTime(ambLevel, ctx.currentTime + 0.3);
-    }
-
-    return {
-      init, unmute, mute, isMuted, setProgress,
-      scene1Scroll: (p) => booted && onScene1Scroll(p),
-      scene2Scroll: (p) => booted && onScene2Scroll(p),
-      yawn:  () => booted && playYawn(),
-      leaf:  () => booted && playLeafRustle(),
-      step:  () => booted && playFootstep(),
-      chime: () => booted && playChime(),
-      bell:  () => booted && playBell(),
-    };
+    return { init, unmute, mute, isMuted, onScroll };
   })();
-
-  // ---------- Frame-based SFX triggers ----------
-  // Each entry fires once when scrolling forward across its frame index.
-  const sfxTriggers = [
-    { frame:  10, fn: 'yawn',  cooldown: 8000 },
-    { frame:  70, fn: 'leaf',  cooldown: 4000 },
-    { frame:  88, fn: 'leaf',  cooldown: 4000 },
-    { frame: 105, fn: 'step',  cooldown:  600 },
-    { frame: 115, fn: 'step',  cooldown:  600 },
-    { frame: 125, fn: 'step',  cooldown:  600 },
-    { frame: 135, fn: 'step',  cooldown:  600 },
-    { frame: 145, fn: 'step',  cooldown:  600 },
-    { frame: 155, fn: 'step',  cooldown:  600 },
-    { frame: 167, fn: 'chime', cooldown: 8000 },
-    { frame: 188, fn: 'bell',  cooldown: 8000 },
-  ].map(t => ({ ...t, lastFiredAt: 0, armed: true }));
-
-  let lastFrame = 0;
-  // Window (in frames) after a trigger during which the SFX is still
-  // contextually relevant if the user only just unmuted.
-  const RELEVANT_WINDOW = 30;
-
-  function maybeFireSfx(frame) {
-    // Critical: while audio is muted, do NOT advance lastFrame. If we did,
-    // a user who scrolls past frame 10 with audio off would silently
-    // "consume" the yawn trigger; when they finally tap unmute, the
-    // forward-crossing condition (lastFrame < trigger.frame) would never
-    // be true again. By leaving lastFrame frozen, the very next forward
-    // motion after unmuting will detect the crossing and fire.
-    if (Audio.isMuted()) return;
-    const now = performance.now();
-    const forward = frame > lastFrame;
-    for (const t of sfxTriggers) {
-      if (forward && lastFrame < t.frame && frame >= t.frame) {
-        if (now - t.lastFiredAt > t.cooldown) {
-          Audio[t.fn]();
-          t.lastFiredAt = now;
-        }
-      }
-    }
-    lastFrame = frame;
-  }
-
-  // Called the moment the user unmutes. Plays any trigger whose moment
-  // is happening *right now* on screen so they don't miss it (e.g. they
-  // tapped the speaker icon while Momo is mid-yawn).
-  function fireSfxOnUnmute() {
-    const idx = currentFrame >= 0 ? currentFrame : 0;
-    const now = performance.now();
-    for (const t of sfxTriggers) {
-      if (idx >= t.frame && idx <= t.frame + RELEVANT_WINDOW) {
-        if (now - t.lastFiredAt > t.cooldown) {
-          Audio[t.fn]();
-          t.lastFiredAt = now;
-        }
-      }
-    }
-    // Align lastFrame so subsequent forward motion doesn't double-fire.
-    lastFrame = idx;
-  }
 
   // ---------- Build dust motes ----------
   for (let i = 0; i < 14; i++) {
@@ -1076,12 +632,9 @@
     const idx = Math.round(p * (FRAME_COUNT - 1));
     if (idx !== lastRenderedIdx) {
       setFrame(idx);
-      maybeFireSfx(idx);
       lastRenderedIdx = idx;
     }
-    Audio.setProgress(p);
-    Audio.scene1Scroll(p);
-    Audio.scene2Scroll(p);
+    Audio.onScroll(p);
 
     if (p > 0.015) titleEl.classList.add('hidden');
     else titleEl.classList.remove('hidden');
@@ -1137,7 +690,6 @@
         audioBtn.setAttribute('aria-label', 'Mute sound');
         // Play any SFX whose moment is happening on screen right now,
         // so the user doesn't miss the yawn just because they unmuted late.
-        fireSfxOnUnmute();
       } else {
         Audio.mute();
         audioBtn.classList.remove('is-on');
