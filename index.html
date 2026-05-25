@@ -518,12 +518,18 @@
     ctx.drawImage(img, dx, dy, dw, dh);
   }
 
-  // ---------- Image preloading ----------
+  // ---------- Resource preloading ----------
   const images = new Array(FRAME_COUNT);
-  let loadedCount = 0;
+  const AUDIO_FILES = [
+    'assets/audio/1-2.mp3',
+    'assets/audio/2-3.mp3',
+    'assets/audio/3-4.mp3',
+  ];
+  const TOTAL_RESOURCES = FRAME_COUNT + AUDIO_FILES.length;
+  let resourcesLoaded = 0;
 
   function setLoaderProgress() {
-    const pct = Math.round((loadedCount / FRAME_COUNT) * 100);
+    const pct = Math.round((resourcesLoaded / TOTAL_RESOURCES) * 100);
     loaderFill.style.width = pct + '%';
     loaderText.textContent = `waking up… ${pct}%`;
   }
@@ -532,12 +538,21 @@
     return new Promise((resolve) => {
       const img = new Image();
       img.decoding = 'async';
-      const done = () => { loadedCount++; setLoaderProgress(); resolve(img); };
+      const done = () => { resourcesLoaded++; setLoaderProgress(); resolve(img); };
       img.onload  = done;
       img.onerror = done;
       img.src = FRAME_PATH(i + 1);
       images[i] = img;
     });
+  }
+
+  // Pull each audio file into the HTTP cache so the AudioContext later
+  // decodes it instantly. Counts toward the loader progress.
+  function preloadAudioFile(url) {
+    return fetch(url, { cache: 'force-cache' })
+      .then((r) => (r && r.ok ? r.blob() : null))
+      .catch(() => null)
+      .finally(() => { resourcesLoaded++; setLoaderProgress(); });
   }
 
   async function preloadInitial() {
@@ -556,6 +571,15 @@
       }
     });
     await Promise.all(workers);
+  }
+
+  async function preloadAllFrames() {
+    await preloadInitial();
+    await preloadRest();
+  }
+
+  async function preloadAllAudio() {
+    await Promise.all(AUDIO_FILES.map(preloadAudioFile));
   }
 
   // ---------- Frame rendering ----------
@@ -698,12 +722,19 @@
     window.addEventListener('resize', () => { resize(); onResize(); });
     window.addEventListener('orientationchange', () => setTimeout(() => { resize(); onResize(); }, 100));
 
-    // Safety net: never let the loader hang forever
-    setTimeout(startExperience, 12000);
+    // Safety net: never let the loader hang forever (full preload can take
+    // a while on slow networks; bail out after 2 minutes no matter what).
+    const safetyTimer = setTimeout(startExperience, 120000);
 
-    await preloadInitial();
-    startExperience();   // unlock scrolling + animation immediately
-    preloadRest();       // continue loading the rest in the background
+    // Wait for ALL resources (every frame + every audio file) before
+    // revealing the page. The loader bar reflects the combined progress.
+    await Promise.all([
+      preloadAllFrames(),
+      preloadAllAudio(),
+    ]);
+
+    clearTimeout(safetyTimer);
+    startExperience();
   }
 
   boot();
